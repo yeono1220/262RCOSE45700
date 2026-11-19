@@ -160,7 +160,7 @@ const esc=s=>String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"
 const pill=(t,c='')=>`<span class="pill ${c}">${t}</span>`;
 const sv=v=>v==null?'<span class="st X">–</span>':`<span class="st ${v}">${v}</span>`;
 const kindPill=s=>s.kind==='real'?pill('실제 Run','real'):pill('예시','mock');
-const revPill=r=>r==='Reviewed'?pill('Reviewed','ok'):r==='Missing'?pill('Missing','warn'):pill('Draft','warn');
+const revPill=r=>r==='Reviewed'?pill('Reviewed','ok'):r==='Missing'?pill('Missing','warn'):pill('Draft · 검수 전','warn');
 const failPills=s=>failCodes(s).map(c=>pill(FAIL[c]||esc(c),c==='unclassified'?'warn':'bad')).join('');
 const actLbl=c=>ACT[c]||esc(c), condLbl=c=>COND[c]||esc(c);
 function go(v,patch={}){Object.assign(st,patch);st.view=v;render();window.scrollTo({top:0});}
@@ -197,7 +197,7 @@ const imgTag=(s,thumb)=>{const u=thumb&&s.thumb||s.image;return u?`<img src="${e
 
 /* ---------------- API 모드: 백엔드 응답 → 화면 형식 ---------------- */
 const relIn=(x,ps)=>({gt:x.expected==='Missing'?null:x.expected,pred:x.predicted,ok:noResult(ps)?null:x.match});
-function fromList(it){return {scene_id:it.item_id,kind:it.data_kind==='real'?'real':'mock',review_status:it.annotation_status,scene:'',conditions:[],
+function fromList(it){return {scene_id:it.item_id,kind:it.data_kind==='real'?'real':'mock',review_status:it.annotation_status,scope:it.review_scope||null,scene:'',conditions:[],
   image:it.image_url?api.base+it.image_url:'',thumb:it.thumbnail_url?api.base+it.thumbnail_url:'',_full:false,
   gt:{objects:[],regions:[],relations:{},actions:null},pred:{valid:it.prediction_status==='valid',status:it.prediction_status,objects:[],regions:[],relations:{},actions:[]},
   scoring:{pass:it.action_eval.pass,excluded:it.action_eval.excluded_reason||it.excluded_reason,errors:(it.action_eval.fail_reasons||[]).map(c=>({code:c,raw:null})),raw_errors:[],
@@ -209,7 +209,7 @@ function fromDetail(d,s){
   const C=(ref.regions||[]).find(r=>r.type==='driving_area'),cid=C&&C.region_id;
   const rels=o=>Object.fromEntries(Object.entries(o||{}).filter(([k,v])=>v).map(([k,v])=>[k,{state:v.state,object_ids:v.object_ids||[],region_ids:(v.region_ids||[]).filter(x=>x!==cid),reason:v.reason}]));
   const c=(d.input||{}).conditions||{};
-  Object.assign(s,{_full:true,review_status:ref.annotation_status||s.review_status,missing_reason:ref.reason||sc.excluded_reason,img_w:(d.image_size||{}).width,img_h:(d.image_size||{}).height,
+  Object.assign(s,{_full:true,review_status:ref.annotation_status||s.review_status,scope:ref.review_scope||s.scope||null,missing_reason:ref.reason||sc.excluded_reason,img_w:(d.image_size||{}).width,img_h:(d.image_size||{}).height,
     conditions:[c.time,c.weather,c.road].filter(Boolean),C:C?C.polygon_xy_norm:null,blockers:(dg.benchmark||{}).blockers||[],
     run:{name:d.run.label||d.run_id,quant:(d.run.model||{}).quantization?'nf4':'–',adapter:(d.run.model||{}).adapter_loaded?'loaded':null,branch:'scorer',commit:String((d.versions||{}).scorer_commit||'').slice(0,7)},
     gt:{objects:(ref.objects||[]).map(obj),regions:(ref.regions||[]).filter(r=>r.type!=='driving_area').map(reg),relations:rels(ref.relations),actions:ref.action_rules||null},
@@ -219,7 +219,7 @@ function fromDetail(d,s){
     relations:Object.fromEntries(Object.entries(sc.relations||{}).map(([k,v])=>[k,relIn(v,d.prediction.status)])),
     no_grounding:!g.objects,box_pairs:go.pairs||[],unmatched_pred:go.unmatched_prediction_ids||[],unmatched_ref:go.unmatched_reference_ids||[],unmeasurable_regions:(g.regions||{}).unmeasurable_reference_ids||[],
     evidence:Object.fromEntries(Object.entries(dg.evidence||{}).filter(([k,v])=>v&&(v.status==='pass'||v.status==='fail')).map(([k,v])=>[k,v.status==='pass'?'match':'mismatch'])),
-    groups:ae.required_groups!=null&&ae.pass!=null?[ae.matched_required_groups||0,ae.required_groups]:null});
+    groups:ae.required_groups!=null&&ae.pass!=null?[ae.matched_required_groups||0,ae.required_groups]:null,group_hits:Array.isArray(ae.required_group_hits)?ae.required_group_hits:null});
   return s;}
 async function getJSON(p){const r=await fetch(api.base+p);if(!r.ok)throw new Error(r.status+' '+p);return r.json();}
 /* 목록 필터는 백엔드 쿼리(relation, fail_reason, annotation_status, data_kind)로 보냄. '오류만'은 화면에서만 거름. */
@@ -261,7 +261,7 @@ document.getElementById('legend').innerHTML=`
   <h4>데이터</h4>
   ${pill('Draft','warn')}<span>검수 전 정답 · 공식 점수 아님</span>${pill('실제 Run','real')}<span>실제 모델 실행 결과</span>${pill('예시','mock')}<span>화면 확인용 가상 값</span>
   <h4>이미지</h4>
-  <span class="ly" style="padding:2px 6px"><i class="c"></i></span><span>C 평가 영역 · 모델엔 안 줌</span>
+  <span class="ly" style="padding:2px 6px"><i class="c"></i></span><span>진행 공간 (사람이 그린 평가 영역) · 모델엔 안 줌</span>
   <span class="ly" style="padding:2px 6px"><i class="g"></i></span><span>GT (정답)</span>
   <span class="ly" style="padding:2px 6px"><i class="p"></i></span><span>예측 (모델)</span>`;
 
@@ -451,6 +451,7 @@ function toggleHl(ids){const same=ids.length===st.hl.size&&ids.every(i=>st.hl.ha
 function tl(k){st.layers[k]=!st.layers[k];render();}
 /* 필요 묶음별 ✓/✗: 예측 (대응, 조건) 쌍이 묶음의 대안과 같으면 충족. 백엔드 충족 수와 다르면 표시하지 않음(백엔드 값 우선). */
 function groupHits(s){const ga=s.gt.actions,sc=s.scoring;if(!ga||!s.pred.valid||!sc.groups)return null;
+  if(sc.group_hits&&sc.group_hits.length===ga.required_groups.length)return sc.group_hits; /* 백엔드가 묶음별 충족 여부를 주면 그대로 사용 */
   const hit=ga.required_groups.map(g=>g.alternatives.some(a=>s.pred.actions.some(p=>p.code===a.code&&p.condition===a.condition)));
   return hit.filter(Boolean).length===sc.groups[0]?hit:null;}
 function F5(){
@@ -467,7 +468,7 @@ function F5(){
     :s.pred.status==='cancelled'?['na','취소됨 · 결과 없음','실행이 취소된 요청이에요']
     :!s.pred.valid?['bad',s.pred.status==='timeout'?'Timeout · 응답 없음':'Invalid · 모델 출력 형식 오류',esc(s.pred.raw_excerpt||'')]
     :s.review_status==='Missing'?['warn','정답 없음 · 채점 제외',esc(s.missing_reason||'')]
-    :sc.pass==null&&s.review_status==='Draft'?['warn','Draft 정답 · 채점 제외','검수 전이라 공식 채점에서 빠짐']
+    :sc.pass==null&&s.review_status==='Draft'?['warn','정답 검수 전 · 채점 제외','Draft 라벨은 표시만 하고 점수에는 넣지 않아요']
     :sc.pass==null?['na','대응 N/A','방향 충돌 장면 · 관계만 채점']
     :sc.pass?['ok','대응 통과','']:['bad','대응 실패',''];
   const why=t=>t?`<div class="why" title="눌러서 펼치기" onclick="this.classList.toggle('open')">${esc(t)}</div>`:'';
@@ -479,12 +480,12 @@ function F5(){
     <button class="btn" ${idx<=0?'disabled':''} onclick="go('scene',{sid:'${L[idx-1]?.scene_id}',hl:new Set()})">‹</button><span class="small muted">${idx>=0?idx+1:'–'} / ${L.length}</span><button class="btn" ${idx<0||idx>=L.length-1?'disabled':''} onclick="go('scene',{sid:'${L[idx+1]?.scene_id}',hl:new Set()})">›</button>
   </div>
   <div class="verdict ${verdict[0]}"><b>${verdict[1]}</b>${s.pred.valid&&sc.pass===false?failPills(s):''}${sc.groups&&s.pred.valid&&sc.pass!=null?`<span class="small muted">필요 대응 ${sc.groups[0]}/${sc.groups[1]}</span>`:''}${verdict[2]?`<span class="small muted">${verdict[2]}</span>`:''}
-    <span class="sp"></span>${s.review_status==='Draft'?`<span class="small muted" title="${esc((s.blockers||[]).join(', '))}">Draft 기준 진단 · 공식 점수 아님</span>`:''}</div>
+    <span class="sp"></span>${s.review_status==='Draft'&&sc.pass!=null?`<span class="small muted" title="${esc((s.blockers||[]).join(', '))}">Draft 기준 진단 · 공식 점수 아님</span>`:''}</div>
   <div class="grid">
     <div class="left">
       <div class="stage" style="${s.img_w&&s.img_h?`aspect-ratio:${s.img_w}/${s.img_h}`:''}">${s.image?'':backdrop(s)}${imgTag(s)}${svgFor(s)}</div>
       <div class="layers">
-        <button class="ly ${st.layers.c?'':'off'}" title="사람이 그린 평가 영역 · 모델 입력엔 안 줌" onclick="tl('c')"><i class="c"></i>C 영역</button>
+        <button class="ly ${st.layers.c?'':'off'}" title="사람이 그린 평가 영역 · 모델 입력엔 안 줌" onclick="tl('c')"><i class="c"></i>진행 공간</button>
         <button class="ly ${st.layers.gt?'':'off'}" onclick="tl('gt')"><i class="g"></i>GT</button>
         <button class="ly ${st.layers.pred?'':'off'}" onclick="tl('pred')"><i class="p"></i>예측</button>
         ${st.hl.size?'<button class="btn" onclick="st.hl=new Set();render()">강조 해제</button>':''}
@@ -503,7 +504,7 @@ function F5(){
       <section class="card sec">
         <h2>대응 ${sc.groups&&ga?`<span>필요 ${sc.groups[0]}/${sc.groups[1]} 충족</span>`:''}</h2>
         ${ga?ga.required_groups.map((x,i)=>`<div class="need"><span class="mark ${hits?(hits[i]?'y':'n'):'q'}">${hits?(hits[i]?'✓':'✕'):i+1}</span><div>${x.alternatives.map(a=>`<b>${actLbl(a.code)}</b> <span class="cond">${condLbl(a.condition)}</span>`).join('<span class="or">또는</span>')}</div></div>`).join('')
-          :s.review_status==='Missing'?pill('Missing · 정답 미작성','warn'):pill('N/A · 방향 충돌 장면','na')}
+          :s.review_status==='Missing'?pill('Missing · 정답 미작성','warn'):/direction_conflict/.test(sc.excluded||'')||!API_MODE?pill('N/A · 방향 충돌 장면','na'):pill(s.review_status==='Draft'?'대응 정답 없음 · 정답 검수 전':'대응 정답 없음 · 채점 제외','na')}
         <div class="out"><div class="row">${pill('모델이 낸 대응','pred')}</div>
           ${s.pred.valid?(s.pred.actions.length?s.pred.actions.map(a=>`<div><b>${actLbl(a.code)}</b> <span class="cond">${condLbl(a.condition)}${a.based_on&&a.based_on.length?' · '+a.based_on.join(','):''}</span></div>`).join(''):'<span class="muted small">없음</span>'):pstPill(s.pred.status)}</div>
         ${ga&&ga.forbidden_pairs.length||raws.length?`<details class="more"><summary>금지 대응 ${ga?ga.forbidden_pairs.length:0}쌍${raws.length?` · 백엔드 원문 ${raws.length}건`:''}</summary><div class="body">
@@ -511,7 +512,7 @@ function F5(){
           ${raws.length?`<ul>${raws.map(x=>`<li><span class="mono">${esc(x)}</span></li>`).join('')}</ul>`:''}</div></details>`:''}
       </section>
       <section class="card sec">
-        <h2>Box 짝짓기 <span>${sc.no_grounding?'정답 Box가 없어 짝짓기 안 함':`짝 ${sc.box_pairs.length} · 예측만 ${sc.unmatched_pred.length} · GT만 ${sc.unmatched_ref.length}`}</span></h2>
+        <h2>Box 짝짓기 <span>${sc.no_grounding?(s.gt.objects.length?'정답 검수 전이라 짝짓기 안 함':'정답 Box가 없어 짝짓기 안 함'):`짝 ${sc.box_pairs.length} · 예측만 ${sc.unmatched_pred.length} · GT만 ${sc.unmatched_ref.length}`}</span></h2>
         <div class="chips">${sc.box_pairs.map(m=>`<button class="chip ${st.hl.has(m.prediction_id)&&st.hl.has(m.reference_id)?'on':''}" title="${esc(m.prediction_id)} ↔ ${esc(m.reference_id)}" onclick="toggleHl(['${m.prediction_id}','${m.reference_id}'])">${esc(m.prediction_id)} · IoU ${(+m.iou).toFixed(2)}</button>`).join('')}${sc.unmatched_pred.map(i=>`<button class="chip pred ${st.hl.has(i)?'on':''}" title="짝 없는 예측" onclick="toggleHl(['${i}'])">${esc(i)} · 짝 없음</button>`).join('')}${sc.no_grounding?s.pred.objects.map(o=>`<button class="chip pred ${st.hl.has(o.id)?'on':''}" onclick="toggleHl(['${o.id}'])">${esc(o.id)} · ${esc(o.class)}</button>`).join(''):!sc.box_pairs.length&&!sc.unmatched_pred.length?'<span class="muted small">예측 Box 없음</span>':''}</div>
         ${sc.unmatched_ref.length||s.run?`<details class="more"><summary>GT만 있는 Box ${sc.unmatched_ref.length}개${s.run?' · Run 정보':''}</summary><div class="body">
           ${sc.unmatched_ref.length?`<div class="chips">${sc.unmatched_ref.map(i=>`<button class="chip gt ${st.hl.has(i)?'on':''}" onclick="toggleHl(['${i}'])">${esc(i)}</button>`).join('')}</div>`:''}
