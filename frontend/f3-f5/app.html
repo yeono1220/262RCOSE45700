@@ -100,6 +100,9 @@ h1{margin:0;font-size:20px;font-weight:700}
 .left{display:grid;gap:8px;position:sticky;top:64px}@media (max-width:1000px){.left{position:static}}
 .stage{position:relative;width:100%;aspect-ratio:16/9;border-radius:12px;overflow:hidden;background:#7c8794;border:1px solid var(--line)}
 .stage img,.stage svg{position:absolute;inset:0;width:100%;height:100%}
+.stage[data-image-state="loading"] svg,.stage[data-image-state="error"] svg,.stage[data-image-state="missing"] svg{visibility:hidden}
+.photo-status{display:grid;position:absolute;inset:0;place-content:center;padding:16px;text-align:center;background:var(--panel);color:var(--fg)}
+.photo-status[hidden]{display:none}
 .layers{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 .ly{display:flex;align-items:center;gap:6px;border:1px solid var(--line2);background:var(--panel);border-radius:8px;padding:4px 10px;cursor:pointer;font-size:12.5px}
 .ly i{width:16px;height:10px;border:2px solid;border-radius:2px}.ly.off{opacity:.45}
@@ -148,8 +151,13 @@ details.more ul{margin:0;padding-left:18px;color:var(--muted)}
 const D=null;
 const API_MODE=!D;
 const ACT={"VERIFY_BEFORE_ADVANCE":"확인 후 진행","REDUCE_SPEED_IF_MOVING":"이동 중이면 감속","YIELD_IF_OCCUPIED":"점유 시 양보","HOLD_UNTIL_CLEAR":"해소될 때까지 보류","VERIFY_PASSAGE":"통과 가능성 확인","MONITOR_AHEAD":"전방 관찰","ADVANCE_WITH_MONITORING":"관찰하며 진행"};
-const COND={"no_condition":"조건 없음","while_corridor_occupied":"점유 동안","while_actor_near_entrance":"출입구 주변 Actor 있는 동안","before_entering_occluded_area":"가려진 영역 진입 전","before_passing_restricted_section":"좁아진 구간 통과 전","before_resolving_uncertainty":"불확실성 확인 전"};
-const REL={"R1":{"label":"점유","q":"보이는 Actor·Obstacle이 C를 점유하는가"},"R2":{"label":"출입구","q":"C와 이어지는 출입구 주변에 보이는 Actor가 있는가"},"R3":{"label":"시야 가림","q":"진행 판단에 필요한 영역이 가려졌는가"},"R4":{"label":"통행 제한","q":"배치가 C 구간의 통행 공간을 제한하는가"}};
+const COND={"no_condition":"조건 없음","while_corridor_occupied":"점유 동안","while_actor_near_entrance":"출입구에 사람이나 차량이 있는 동안","before_entering_occluded_area":"가려진 영역 진입 전","before_passing_restricted_section":"좁아진 구간 통과 전","before_resolving_uncertainty":"불확실성 확인 전"};
+const REL={
+  R1:{label:"경로 점유",en:"Path Occupancy",q:"사람의 발이나 차량 바퀴 등 대상이 땅에 닿는 범위가 진행 공간과 겹치나요?"},
+  R2:{label:"출입구 이용자",en:"Entrance Users",q:"진행 공간과 이어지는 출입구 안이나 경계에 사람이나 차량이 보이나요?"},
+  R3:{label:"시야 가림",en:"Blocked View",q:"진행에 필요한 도로나 출입구의 어느 부분이 무엇에 가려져 있나요?"},
+  R4:{label:"통행 제약",en:"Passage Constraint",q:"어느 구간에서 무엇 때문에 지나갈 폭이 줄어드나요?"}
+};
 /* 실패 사유 코드 = 백엔드 action_eval.fail_reasons. reference_inconsistent: based_on 관계가 정답에서 A인 경우(백엔드가 분리한 코드). unclassified는 파일 모드(옛 영문 문장)에서만 나옴. */
 const FAIL=Object.assign({missing_required:'필요 대응 누락',forbidden:'금지 대응',unsupported:'근거 없는 대응',contradiction:'관계 판정과 모순',reference_inconsistent:'근거 관계가 정답과 다름',invalid:'형식 오류'},API_MODE?{}:{unclassified:'분류 미정'});
 let S=D?D.scenes:[];
@@ -158,9 +166,13 @@ const F0=()=>({kind:'',rel:'',fail:'',review:'',onlyFail:true});
 const st={view:API_MODE?'runs':'errors',base:'',cmp:{base:'',target:''},condKey:'weather',sid:S[0]?.scene_id,rel:'R1',hl:new Set(),layers:{c:true,gt:true,pred:true},f:F0()};
 const esc=s=>String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
 const pill=(t,c='')=>`<span class="pill ${c}">${t}</span>`;
-const sv=v=>v==null?'<span class="st X">–</span>':`<span class="st ${v}">${v}</span>`;
+const STATE_LABELS={P:["Y","있음"],A:["N","없음"],U:["U","판단 어려움"]};
+const sv=v=>Object.hasOwn(STATE_LABELS,v)?`<span class="st ${v}" title="${STATE_LABELS[v][1]}" aria-label="${STATE_LABELS[v][1]}">${STATE_LABELS[v][0]}</span>`:'<span class="st X" title="값 없음" aria-label="값 없음">–</span>';
 const kindPill=s=>s.kind==='real'?pill('실제 Run','real'):pill('예시','mock');
-const revPill=r=>r==='Reviewed'?pill('Reviewed','ok'):r==='Missing'?pill('Missing','warn'):pill('Draft · 검수 전','warn');
+const REVIEW_LABELS={Reviewed:'검수 완료',Missing:'정답 없음',Draft:'검수 전'};
+const revPill=r=>pill(REVIEW_LABELS[r]||REVIEW_LABELS.Draft,r==='Reviewed'?'ok':'warn');
+const reviewPill=s=>s.review_status==='Reviewed'&&s.review_scope==='relations_only'
+  ?pill('관계만 검수','warn'):revPill(s.review_status);
 const failPills=s=>failCodes(s).map(c=>pill(FAIL[c]||esc(c),c==='unclassified'?'warn':'bad')).join('');
 const actLbl=c=>ACT[c]||esc(c), condLbl=c=>COND[c]||esc(c);
 function go(v,patch={}){Object.assign(st,patch);st.view=v;render();window.scrollTo({top:0});}
@@ -175,10 +187,10 @@ function list(){const f=st.f;return S.filter(s=>{
   if(f.review&&s.review_status!==f.review)return false;return true;});}
 /* 대응 결과 배지: 값은 백엔드 채점(scoring.pass) 그대로 */
 /* 예측 상태 이름표. not_returned = 아직 결과가 없는 요청(대기·실행 중), cancelled = 취소된 요청 */
-const PST={timeout:['Timeout','bad'],not_returned:['결과 대기','dim'],cancelled:['취소됨','na']};
-const pstPill=st=>{const x=PST[st]||['Invalid','bad'];return pill(x[0],x[1]);};
+const PST={timeout:['응답 시간 초과','bad'],not_returned:['결과 대기','dim'],cancelled:['취소됨','na']};
+const pstPill=st=>{const x=PST[st]||['형식 오류','bad'];return pill(x[0],x[1]);};
 const noResult=st=>st==='not_returned'||st==='cancelled';
-function result(s){return !s.pred.valid?pstPill(s.pred.status):s.scoring.pass==null?(s.review_status==='Reviewed'?pill('N/A','na'):pill('채점 제외','na')):s.scoring.pass?pill('대응 통과','ok'):pill('대응 실패','bad');}
+function result(s){return !s.pred.valid?pstPill(s.pred.status):s.scoring.pass==null?pill('대응 미채점','na'):s.scoring.pass?pill('대응 통과','ok'):pill('대응 실패','bad');}
 const STEPS=[['runs','F1','실행'],['report','F2','리포트'],['errors','F3','오류 목록'],['compare','F4','비교'],['scene','F5','장면 상세']];
 function render(){
   /* 파일 모드에서는 F3·F5만. API 모드에서는 F1~F5 전부. */
@@ -194,10 +206,14 @@ function need(key,path){if(cache[key]!==undefined)return cache[key];
   document.getElementById('app').innerHTML='<div class="card msg"><span class="muted">불러오는 중…</span></div>';return null;}
 const errCard=m=>{document.getElementById('app').innerHTML=`<div class="card msg"><b>불러오지 못했어요</b><span class="small muted mono">${esc(m)}</span></div>`;};
 const imgTag=(s,thumb)=>{const u=thumb&&s.thumb||s.image;return u?`<img src="${esc(u)}" alt="" ${thumb?'loading="lazy"':''} onerror="this.remove()">`:'';};
+function sceneImage(s){
+  if(!s.image)return s.kind==='real'?'<div class="photo-status">이 문항에 제공된 사진이 없습니다.</div>':backdrop(s);
+  return `<img alt="장면 사진" onload="this.parentElement.dataset.imageState='loaded';this.nextElementSibling.hidden=true" onerror="this.parentElement.dataset.imageState='error';this.hidden=true;this.nextElementSibling.textContent='장면 사진을 불러오지 못했습니다.';this.nextElementSibling.hidden=false" src="${esc(s.image)}"><div class="photo-status" role="status">장면 사진을 불러오는 중…</div>`;
+}
 
 /* ---------------- API 모드: 백엔드 응답 → 화면 형식 ---------------- */
 const relIn=(x,ps)=>({gt:x.expected==='Missing'?null:x.expected,pred:x.predicted,ok:noResult(ps)?null:x.match});
-function fromList(it){return {scene_id:it.item_id,kind:it.data_kind==='real'?'real':'mock',review_status:it.annotation_status,scope:it.review_scope||null,scene:'',conditions:[],
+function fromList(it){return {scene_id:it.item_id,kind:it.data_kind==='real'?'real':'mock',review_status:it.annotation_status,review_scope:it.review_scope,scene:'',conditions:[],
   image:it.image_url?api.base+it.image_url:'',thumb:it.thumbnail_url?api.base+it.thumbnail_url:'',_full:false,
   gt:{objects:[],regions:[],relations:{},actions:null},pred:{valid:it.prediction_status==='valid',status:it.prediction_status,objects:[],regions:[],relations:{},actions:[]},
   scoring:{pass:it.action_eval.pass,excluded:it.action_eval.excluded_reason||it.excluded_reason,errors:(it.action_eval.fail_reasons||[]).map(c=>({code:c,raw:null})),raw_errors:[],
@@ -205,11 +221,11 @@ function fromList(it){return {scene_id:it.item_id,kind:it.data_kind==='real'?'re
 function fromDetail(d,s){
   const ref=d.reference||{},P=d.prediction.parsed&&d.prediction.parsed.track1,sc=d.scoring||{},ae=sc.action_eval||{},dg=sc.diagnostics||{},g=dg.grounding||{},go=(g.objects||{})['0.5']||{};
   const obj=o=>({id:o.object_id,class:o.class,role:o.semantic_role,placement:o.placement,bbox:o.bbox_xyxy_norm});
-  const reg=r=>({id:r.region_id,type:r.type,bbox:r.bbox_xyxy_norm,polygon:r.polygon_xy_norm});
+  const reg=r=>({id:r.region_id,type:r.type,bbox:r.bbox_xyxy_norm,polygon:r.polygon_xy_norm,geometry_status:r.geometry_status});
   const C=(ref.regions||[]).find(r=>r.type==='driving_area'),cid=C&&C.region_id;
   const rels=o=>Object.fromEntries(Object.entries(o||{}).filter(([k,v])=>v).map(([k,v])=>[k,{state:v.state,object_ids:v.object_ids||[],region_ids:(v.region_ids||[]).filter(x=>x!==cid),reason:v.reason}]));
   const c=(d.input||{}).conditions||{};
-  Object.assign(s,{_full:true,review_status:ref.annotation_status||s.review_status,scope:ref.review_scope||s.scope||null,missing_reason:ref.reason||sc.excluded_reason,img_w:(d.image_size||{}).width,img_h:(d.image_size||{}).height,
+  Object.assign(s,{_full:true,review_status:ref.annotation_status||s.review_status,review_scope:ref.review_scope,missing_reason:ref.reason||sc.excluded_reason,img_w:(d.image_size||{}).width,img_h:(d.image_size||{}).height,
     conditions:[c.time,c.weather,c.road].filter(Boolean),C:C?C.polygon_xy_norm:null,blockers:(dg.benchmark||{}).blockers||[],
     run:{name:d.run.label||d.run_id,quant:(d.run.model||{}).quantization?'nf4':'–',adapter:(d.run.model||{}).adapter_loaded?'loaded':null,branch:'scorer',commit:String((d.versions||{}).scorer_commit||'').slice(0,7)},
     gt:{objects:(ref.objects||[]).map(obj),regions:(ref.regions||[]).filter(r=>r.type!=='driving_area').map(reg),relations:rels(ref.relations),actions:ref.action_rules||null},
@@ -218,8 +234,9 @@ function fromDetail(d,s){
   Object.assign(s.scoring,{pass:ae.pass,excluded:ae.excluded_reason||sc.excluded_reason,errors:(ae.fail_reasons||[]).map(c=>({code:c,raw:null})),raw_errors:ae.errors||[],
     relations:Object.fromEntries(Object.entries(sc.relations||{}).map(([k,v])=>[k,relIn(v,d.prediction.status)])),
     no_grounding:!g.objects,box_pairs:go.pairs||[],unmatched_pred:go.unmatched_prediction_ids||[],unmatched_ref:go.unmatched_reference_ids||[],unmeasurable_regions:(g.regions||{}).unmeasurable_reference_ids||[],
-    evidence:Object.fromEntries(Object.entries(dg.evidence||{}).filter(([k,v])=>v&&(v.status==='pass'||v.status==='fail')).map(([k,v])=>[k,v.status==='pass'?'match':'mismatch'])),
-    groups:ae.required_groups!=null&&ae.pass!=null?[ae.matched_required_groups||0,ae.required_groups]:null,group_hits:Array.isArray(ae.required_group_hits)?ae.required_group_hits:null});
+    evidence:Object.fromEntries(Object.entries(dg.evidence||{}).filter(([k,v])=>v).map(([k,v])=>[k,v.status==='pass'?'match':v.status==='fail'?'mismatch':v.status==='excluded'?'excluded':null])),
+    groups:ae.required_groups!=null&&ae.pass!=null?[ae.matched_required_groups||0,ae.required_groups]:null,
+    group_hits:ae.required_group_hits});
   return s;}
 async function getJSON(p){const r=await fetch(api.base+p);if(!r.ok)throw new Error(r.status+' '+p);return r.json();}
 /* 목록 필터는 백엔드 쿼리(relation, fail_reason, annotation_status, data_kind)로 보냄. '오류만'은 화면에서만 거름. */
@@ -254,15 +271,15 @@ function backdrop(s){const n=s.conditions.includes('야간');return `<svg viewBo
 
 document.getElementById('legend').innerHTML=`
   <h4>관계 값</h4>
-  <span class="st P">P</span><span>성립</span><span class="st A">A</span><span>불성립</span>
-  <span class="st U">U</span><span>사진만으로 판단 불가 — <b>정답 값</b> (오류 아님)</span>
+  ${sv('P')}<span>있음 · Yes</span>${sv('A')}<span>없음 · No</span>
+  ${sv('U')}<span>판단 어려움 · Unclear</span>
   <h4>빈 값</h4>
-  ${pill('Missing','warn')}<span>정답 미작성 · 채점 제외</span>${pill('Invalid','bad')}<span>모델 출력 형식 오류 (Timeout 포함)</span>${pill('N/A','na')}<span>이 장면엔 해당 없음</span>
+  ${revPill('Missing')}<span>비교할 정답이 없음</span>${pill('형식 오류','bad')}<span>모델 출력이 요구 형식과 다름</span>${pill('응답 시간 초과','bad')}<span>정해진 시간 안에 답이 오지 않음</span>${pill('채점 제외','na')}<span>제외 사유를 장면 상세에서 확인</span>
   <h4>데이터</h4>
-  ${pill('Draft','warn')}<span>검수 전 정답 · 공식 점수 아님</span>${pill('실제 Run','real')}<span>실제 모델 실행 결과</span>${pill('예시','mock')}<span>화면 확인용 가상 값</span>
+  ${revPill('Draft')}<span>검수 전 초안으로만 비교</span>${pill('실제 Run','real')}<span>실제 모델 실행 결과</span>${pill('예시','mock')}<span>화면 확인용 가상 값</span>
   <h4>이미지</h4>
-  <span class="ly" style="padding:2px 6px"><i class="c"></i></span><span>진행 공간 (사람이 그린 평가 영역) · 모델엔 안 줌</span>
-  <span class="ly" style="padding:2px 6px"><i class="g"></i></span><span>GT (정답)</span>
+  <span class="ly" style="padding:2px 6px"><i class="c"></i></span><span>진행 공간 D · Driving Area</span>
+  <span class="ly" style="padding:2px 6px"><i class="g"></i></span><span>정답 · Reference</span>
   <span class="ly" style="padding:2px 6px"><i class="p"></i></span><span>예측 (모델)</span>`;
 
 /* ---------------- F1 실행 (읽기 전용: Run 목록·설정·진행) ---------------- */
@@ -332,7 +349,7 @@ setInterval(async()=>{if(!API_MODE||api.state!=='ok'||st.view!=='runs'||nr.busy|
 
 /* ---------------- F2 리포트: 값·구간·판정은 Report API 값을 그대로 표시 ---------------- */
 const MET={v1_valid:['V1 형식 통과율','rate'],v2_invalid:['V2 형식 오류율','rate',1],v3_grounding:['V3 근거 Box F1 (IoU 0.5)','f1'],v4_evidence:['V4 근거 일치율','rate'],
-  v5_relation_macro_f1:['V5 관계 Macro-F1','f1'],v6_present_recall:['V6 성립(P) 재현율','rate'],v7_false_positive_rate:['V7 오탐률','rate',1],v8_unknown_recall:['V8 판단불가(U) 재현율','rate'],v9_over_abstention:['V9 과잉 보류율','rate',1],
+  v5_relation_macro_f1:['V5 관계 Macro-F1','f1'],v6_present_recall:['V6 있음(Y) 재현율','rate'],v7_false_positive_rate:['V7 오탐률','rate',1],v8_unknown_recall:['V8 판단 어려움(U) 재현율','rate'],v9_over_abstention:['V9 과잉 보류율','rate',1],
   v10_action_pass_rate:['V10 대응 통과율','rate'],v11_required_group_recall:['V11 필요 대응 재현율','rate'],v12_forbidden_rate:['V12 금지 대응률','rate',1],
   v13_statement_error_rate:['V13 진술 오류율','rate',1],v14_answer_with_error_rate:['V14 오류 포함 답변율','rate',1],a1_attribute_f1:['A1 장면 속성 F1','f1'],a2_direction_na_violation:['A2 방향 N/A 위반률','rate',1]};
 const mval=(k,m)=>!m?null:k==='v3_grounding'?((m.by_iou||{})['0.5']||{}).f1??null:m.value??null;
@@ -363,7 +380,7 @@ function F2(){
   <div class="stats">
     <div class="card stat"><b>${d.n_requests}</b><span>요청</span></div>
     <div class="card stat"><b>${c.valid||0}</b><span>형식 통과</span></div>
-    <div class="card stat"><b>${d.n_requests-(c.valid||0)}</b><span>Invalid · Timeout</span></div>
+    <div class="card stat"><b>${d.n_requests-(c.valid||0)}</b><span>형식 통과 외 요청</span></div>
     <div class="card stat" title="${esc(ex.join(' / '))}"><b>${d.n_scored_items}</b><span>채점 문항${ex.length?' · 제외 '+(d.n_requests-d.n_scored_items):''}</span></div>
   </div>
   ${ex.length?`<div class="small muted">제외 사유: ${ex.join(' · ')}</div>`:''}
@@ -412,20 +429,20 @@ function F3(){
     <div class="card stat"><b>${L.length}</b><span>문항</span></div>
     <div class="card stat"><b>${n(s=>s.scoring.pass===false&&s.pred.valid)}</b><span>대응 실패</span></div>
     <div class="card stat"><b>${n(s=>relMismatch(s).length>0)}</b><span>관계 불일치</span></div>
-    <div class="card stat"><b>${n(s=>!s.pred.valid||s.review_status==='Missing')}</b><span>Invalid · Missing</span></div>
+    <div class="card stat"><b>${n(s=>!s.pred.valid&&!noResult(s.pred.status))}</b><span>출력 실패 · 정답 없음 ${n(s=>s.review_status==='Missing')}건</span></div>
   </div>
   <div class="card bar">
     ${sel('kind','데이터 전체',[['real','실제 Run'],['mock','예시']])}
     ${sel('rel','관계 전체',Object.keys(REL).map(k=>[k,`${k} ${REL[k].label} 불일치`]))}
     ${sel('fail','실패 사유 전체',Object.entries(FAIL).map(([k,v])=>[k,v]))}
-    ${sel('review','검수 전체',[['Draft','Draft'],['Reviewed','Reviewed'],['Missing','Missing']])}
+    ${sel('review','검수 전체',Object.entries(REVIEW_LABELS))}
     <span class="sp"></span>
     <label class="tog"><input type="checkbox" ${f.onlyFail?'checked':''} onchange="setF('onlyFail',this.checked)">오류만</label>
     <button class="btn" onclick="resetF()">초기화</button>
   </div>
   ${L.length?L.map(s=>{const rm=relMismatch(s);return `<button class="item" onclick="go('scene',{sid:'${s.scene_id}',rel:'${rm[0]||'R1'}',hl:new Set()})">
     <span class="thumb">${API_MODE?'':s.image?'':backdrop(s)}${imgTag(s,true)}</span>
-    <span class="t"><span class="row"><b class="mono">${esc(s.scene_id)}</b>${kindPill(s)}${revPill(s.review_status)}</span>${s.scene?`<span class="d" title="${esc(s.scene)}">${esc(s.scene)}</span>`:''}</span>
+    <span class="t"><span class="row"><b class="mono">${esc(s.scene_id)}</b>${kindPill(s)}${reviewPill(s)}</span>${s.scene?`<span class="d" title="${esc(s.scene)}">${esc(s.scene)}</span>`:''}</span>
     <span class="rels">${['R1','R2','R3','R4'].map(k=>{const x=s.scoring.relations[k];return `<span class="rc ${x&&x.ok===false?'bad':''}" title="${k} ${REL[k].label}"><i>${k}</i><span class="v">${x?sv(x.gt)+'→'+sv(x.pred):sv(null)}</span></span>`;}).join('')}</span>
     <span class="res">${result(s)}${s.pred.valid?failPills(s):''}</span>
     <span class="chev muted">›</span></button>`;}).join('')
@@ -439,10 +456,20 @@ function svgFor(s){
     const col=cls==='gt'?'var(--gt)':'var(--pred)',dash=thin?'stroke-dasharray="3 4"':cls==='gt'?'':'stroke-dasharray="8 5"';
     /* 라벨은 강조된 Box에만: 평소엔 박스만 보여서 사진이 덜 복잡함 */
     return `<g opacity="${any&&!on?.25:1}"><rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${on?'rgba(255,196,0,.22)':'none'}" stroke="${on?'var(--hl)':col}" stroke-width="${on?5:thin?1.6:2.5}" ${dash}/>${on?`<text x="${pos==='b'?x+w-3:x+3}" y="${pos==='b'?y+h+15:y-5}" text-anchor="${pos==='b'?'end':'start'}" font-size="13" font-weight="700" fill="#ffc400" stroke="rgba(0,0,0,.6)" stroke-width="3" paint-order="stroke">${esc(id)}</text>`:''}</g>`;};
+  const region=(r,side)=>{
+    const p=r.polygon||r.polygon_xy_norm,id=r.id||r.region_id;
+    if(!Array.isArray(p)||p.length<3||!p.every(v=>Array.isArray(v)&&v.length===2&&v.every(n=>Number.isFinite(n)&&n>=0&&n<=1))){
+      return rect(r.bbox||r.bbox_xyxy_norm,side,id,side==='gt'?'t':'b',side==='gt');
+    }
+    const on=hl.has(id),col=side==='gt'?'var(--gt)':'var(--pred)';
+    const points=p.map(([x,y])=>[x*W,y*H]);
+    const [lx,ly]=points.reduce((a,b)=>a[1]<=b[1]?a:b);
+    return `<g opacity="${any&&!on?.25:1}"><polygon points="${points.map(v=>v.join(',')).join(' ')}" fill="${on?'rgba(255,196,0,.22)':'none'}" stroke="${on?'var(--hl)':col}" stroke-width="${on?5:2}" stroke-dasharray="${side==='gt'?'3 4':'8 5'}"/>${on?`<text x="${lx+4}" y="${Math.max(16,ly-6)}" font-size="13" font-weight="700" fill="#ffc400" stroke="rgba(0,0,0,.6)" stroke-width="3" paint-order="stroke">${esc(id)}</text>`:''}</g>`;
+  };
   let g='';
   if(L.c&&s.C)g+=`<polygon points="${s.C.map(p=>p[0]*W+','+p[1]*H).join(' ')}" fill="rgba(208,64,47,.10)" stroke="var(--c)" stroke-width="2.5" stroke-dasharray="9 6"/>`;
-  if(L.gt){s.gt.regions.forEach(r=>g+=rect(r.bbox,'gt',r.id,'t',true));s.gt.objects.forEach(o=>g+=rect(o.bbox,'gt',o.id,'t'));}
-  if(L.pred&&s.pred.valid){(s.pred.regions||[]).forEach(r=>g+=rect(r.bbox,'pred',r.id,'b'));s.pred.objects.forEach(o=>g+=rect(o.bbox,'pred',o.id,'b'));}
+  if(L.gt){s.gt.regions.forEach(r=>g+=region(r,'gt'));s.gt.objects.forEach(o=>g+=rect(o.bbox,'gt',o.id,'t'));}
+  if(L.pred&&s.pred.valid){(s.pred.regions||[]).forEach(r=>g+=region(r,'pred'));s.pred.objects.forEach(o=>g+=rect(o.bbox,'pred',o.id,'b'));}
   return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${g}</svg>`;
 }
 const arr=ids=>JSON.stringify(ids).replace(/"/g,"'");
@@ -451,9 +478,19 @@ function toggleHl(ids){const same=ids.length===st.hl.size&&ids.every(i=>st.hl.ha
 function tl(k){st.layers[k]=!st.layers[k];render();}
 /* 필요 묶음별 ✓/✗: 예측 (대응, 조건) 쌍이 묶음의 대안과 같으면 충족. 백엔드 충족 수와 다르면 표시하지 않음(백엔드 값 우선). */
 function groupHits(s){const ga=s.gt.actions,sc=s.scoring;if(!ga||!s.pred.valid||!sc.groups)return null;
-  if(sc.group_hits&&sc.group_hits.length===ga.required_groups.length)return sc.group_hits; /* 백엔드가 묶음별 충족 여부를 주면 그대로 사용 */
-  const hit=ga.required_groups.map(g=>g.alternatives.some(a=>s.pred.actions.some(p=>p.code===a.code&&p.condition===a.condition)));
+  if(Array.isArray(sc.group_hits))return sc.group_hits;
+  const hit=ga.required_groups.map(g=>g.alternatives.some(a=>s.pred.actions.some(p=>p.code===a.code&&p.condition===a.condition
+    &&(a.based_on||[]).every(r=>(p.based_on||[]).includes(r)))));
   return hit.filter(Boolean).length===sc.groups[0]?hit:null;}
+function actionExclusion(s){
+  const reason=s.scoring.excluded||'';
+  if(reason==='direction_conflict')return ['na','대응 채점 제외 · 방향 충돌','관계만 채점'];
+  if(reason==='action_rules_missing')return ['na','대응 채점 제외 · 정답 규칙 없음','관계만 채점'];
+  if(reason==='reference_relations_only')return ['na','대응 채점 제외 · 관계만 검수','검수된 관계만 채점'];
+  if(reason==='reference_missing'||s.review_status==='Missing')return ['warn','정답 없음 · 채점 제외',s.missing_reason||''];
+  if(reason.startsWith('reference_not_reviewed')||s.review_status==='Draft')return ['warn','정답 검수 전 · 채점 제외','검수 전이라 공식 채점에서 빠짐'];
+  return ['na','대응 미채점',reason];
+}
 function F5(){
   const L=list(),s=S.find(x=>x.scene_id===st.sid)||S[0],idx=L.findIndex(x=>x.scene_id===s.scene_id),sc=s.scoring,r=st.rel;
   if(API_MODE&&!s._full){const el=document.getElementById('app');
@@ -461,50 +498,51 @@ function F5(){
     el.innerHTML='<div class="card msg"><span class="muted">불러오는 중…</span></div>';
     getJSON(`/api/runs/${encodeURIComponent(api.run)}/items/${encodeURIComponent(s.scene_id)}`).then(d=>fromDetail(d,s),e=>{s._err=String(e.message||e);}).then(render);return;}
   const g=s.gt.relations[r],p=s.pred.valid?s.pred.relations[r]:null,ga=s.gt.actions,hits=groupHits(s);
+  const referenceLabel=s.review_status==='Draft'?'라벨 초안':'정답';
   const gids=g?[...g.object_ids,...g.region_ids]:[],pids=p?[...(p.object_ids||[]),...(p.region_ids||[])]:[];
   const ev=sc.evidence&&sc.evidence[r];
   const raws=(sc.raw_errors&&sc.raw_errors.length?sc.raw_errors:sc.errors.filter(e=>e.raw).map(e=>e.raw+' → '+FAIL[e.code||'unclassified']));
+  const exclusion=actionExclusion(s);
   const verdict=s.pred.status==='not_returned'?['na','결과 대기 · 아직 추론 전','대기 또는 실행 중인 요청이에요']
     :s.pred.status==='cancelled'?['na','취소됨 · 결과 없음','실행이 취소된 요청이에요']
-    :!s.pred.valid?['bad',s.pred.status==='timeout'?'Timeout · 응답 없음':'Invalid · 모델 출력 형식 오류',esc(s.pred.raw_excerpt||'')]
-    :s.review_status==='Missing'?['warn','정답 없음 · 채점 제외',esc(s.missing_reason||'')]
-    :sc.pass==null&&s.review_status==='Draft'?['warn','정답 검수 전 · 채점 제외','Draft 라벨은 표시만 하고 점수에는 넣지 않아요']
-    :sc.pass==null?['na','대응 N/A','방향 충돌 장면 · 관계만 채점']
+    :!s.pred.valid?['bad',s.pred.status==='timeout'?'응답 시간 초과':'모델 출력 형식 오류',s.pred.raw_excerpt||'']
+    :sc.pass==null||s.review_status==='Missing'?exclusion
     :sc.pass?['ok','대응 통과','']:['bad','대응 실패',''];
   const why=t=>t?`<div class="why" title="눌러서 펼치기" onclick="this.classList.toggle('open')">${esc(t)}</div>`:'';
   document.getElementById('app').innerHTML=`
   <div class="row">
     <button class="btn" onclick="go('errors')">← 목록</button>
-    <h1 class="mono" style="font-size:17px">${esc(s.scene_id)}</h1>${kindPill(s)}${revPill(s.review_status)}${s.conditions.map(c=>pill(esc(c),'dim')).join('')}
+    <h1 class="mono" style="font-size:17px">${esc(s.scene_id)}</h1>${kindPill(s)}${reviewPill(s)}${s.conditions.map(c=>pill(esc(c),'dim')).join('')}
     <span class="sp"></span>
     <button class="btn" ${idx<=0?'disabled':''} onclick="go('scene',{sid:'${L[idx-1]?.scene_id}',hl:new Set()})">‹</button><span class="small muted">${idx>=0?idx+1:'–'} / ${L.length}</span><button class="btn" ${idx<0||idx>=L.length-1?'disabled':''} onclick="go('scene',{sid:'${L[idx+1]?.scene_id}',hl:new Set()})">›</button>
   </div>
-  <div class="verdict ${verdict[0]}"><b>${verdict[1]}</b>${s.pred.valid&&sc.pass===false?failPills(s):''}${sc.groups&&s.pred.valid&&sc.pass!=null?`<span class="small muted">필요 대응 ${sc.groups[0]}/${sc.groups[1]}</span>`:''}${verdict[2]?`<span class="small muted">${verdict[2]}</span>`:''}
-    <span class="sp"></span>${s.review_status==='Draft'&&sc.pass!=null?`<span class="small muted" title="${esc((s.blockers||[]).join(', '))}">Draft 기준 진단 · 공식 점수 아님</span>`:''}</div>
+  <div class="verdict ${verdict[0]}"><b>${verdict[1]}</b>${s.pred.valid&&sc.pass===false?failPills(s):''}${sc.groups&&s.pred.valid&&sc.pass!=null?`<span class="small muted">필요 대응 ${sc.groups[0]}/${sc.groups[1]}</span>`:''}${verdict[2]?`<span class="small muted">${esc(verdict[2])}</span>`:''}
+    <span class="sp"></span>${s.review_status==='Draft'?`<span class="small muted" title="${esc((s.blockers||[]).join(', '))}">검수 전 정답과 비교 중</span>`:''}</div>
   <div class="grid">
     <div class="left">
-      <div class="stage" style="${s.img_w&&s.img_h?`aspect-ratio:${s.img_w}/${s.img_h}`:''}">${s.image?'':backdrop(s)}${imgTag(s)}${svgFor(s)}</div>
+      <div class="stage" data-image-state="${s.image?'loading':s.kind==='real'?'missing':'example'}" style="${s.img_w&&s.img_h?`aspect-ratio:${s.img_w}/${s.img_h}`:''}">${sceneImage(s)}${svgFor(s)}</div>
       <div class="layers">
-        <button class="ly ${st.layers.c?'':'off'}" title="사람이 그린 평가 영역 · 모델 입력엔 안 줌" onclick="tl('c')"><i class="c"></i>진행 공간</button>
-        <button class="ly ${st.layers.gt?'':'off'}" onclick="tl('gt')"><i class="g"></i>GT</button>
+        <button class="ly ${st.layers.c?'':'off'}" title="Driving Area · 사람이 표시한 평가 영역" onclick="tl('c')"><i class="c"></i>진행 공간 D</button>
+        <button class="ly ${st.layers.gt?'':'off'}" onclick="tl('gt')"><i class="g"></i>${referenceLabel}</button>
         <button class="ly ${st.layers.pred?'':'off'}" onclick="tl('pred')"><i class="p"></i>예측</button>
         ${st.hl.size?'<button class="btn" onclick="st.hl=new Set();render()">강조 해제</button>':''}
-        <span class="sp"></span>${s.image?'':`<span class="small muted">${API_MODE?'이미지 없음 (예시)':'가상 이미지'}</span>`}
+        <span class="sp"></span>${!s.image&&s.kind!=='real'?'<span class="small muted">가상 이미지</span>':''}
       </div>
     </div>
     <div class="right">
       <section class="card sec">
-        <h2>관계 <span>GT → 예측</span></h2>
-        <div class="tabs">${['R1','R2','R3','R4'].map(k=>{const x=sc.relations[k];return `<button class="tab ${k===r?'on':''} ${x&&x.ok===false?'bad':''}" title="${esc(REL[k].q)}" onclick="st.rel='${k}';st.hl=new Set();render()"><span class="n"><b>${k}</b>${REL[k].label}</span><span class="v">${x?sv(x.gt??(s.gt.relations[k]||{}).state)+'→'+sv(x.pred):sv(null)}</span></button>`;}).join('')}</div>
+        <h2>관계 <span>${referenceLabel} → 예측</span></h2>
+        <div class="tabs">${['R1','R2','R3','R4'].map(k=>{const x=sc.relations[k];return `<button class="tab ${k===r?'on':''} ${x&&x.ok===false?'bad':''}" title="${esc(REL[k].en)}" onclick="st.rel='${k}';st.hl=new Set();render()"><span class="n"><b>${k}</b>${REL[k].label}</span><span class="v">${x?sv(x.gt??(s.gt.relations[k]||{}).state)+'→'+sv(x.pred):sv(null)}</span></button>`;}).join('')}</div>
+        <p class="small muted">${esc(REL[r].q)}</p>
         <div class="cmp">
-          <div class="side gt"><div class="row">${pill('GT','gt')}${g?sv(g.state):pill('Missing','warn')}<span class="sp"></span>${gids.length>1?`<button class="chip gt" onclick="toggleHl(${arr(gids)})">전체 보기</button>`:''}</div>${g?chipsFor(gids,'gt'):''}${why(g&&g.reason)}</div>
-          <div class="side pred"><div class="row">${pill('예측','pred')}${p?sv(p.state):s.pred.valid?sv(null):pstPill(s.pred.status)}<span class="sp"></span>${ev?pill(ev==='match'?'근거 일치':'근거 불일치',ev==='match'?'ok':'bad'):''}</div>${p?chipsFor(pids,'pred'):''}${why(p&&p.reason)}</div>
+          <div class="side gt"><div class="row">${pill(referenceLabel,'gt')}${g?.state?sv(g.state):revPill('Missing')}<span class="sp"></span>${gids.length>1?`<button class="chip gt" onclick="toggleHl(${arr(gids)})">전체 보기</button>`:''}</div>${g?chipsFor(gids,'gt'):''}${why(g&&g.reason)}</div>
+          <div class="side pred"><div class="row">${pill('예측','pred')}${p?sv(p.state):s.pred.valid?sv(null):pstPill(s.pred.status)}<span class="sp"></span>${ev==='excluded'?pill('근거 미채점','na'):ev?pill(ev==='match'?'근거 일치':'근거 불일치',ev==='match'?'ok':'bad'):''}</div>${p?chipsFor(pids,'pred'):''}${why(p&&p.reason)}</div>
         </div>
       </section>
       <section class="card sec">
         <h2>대응 ${sc.groups&&ga?`<span>필요 ${sc.groups[0]}/${sc.groups[1]} 충족</span>`:''}</h2>
         ${ga?ga.required_groups.map((x,i)=>`<div class="need"><span class="mark ${hits?(hits[i]?'y':'n'):'q'}">${hits?(hits[i]?'✓':'✕'):i+1}</span><div>${x.alternatives.map(a=>`<b>${actLbl(a.code)}</b> <span class="cond">${condLbl(a.condition)}</span>`).join('<span class="or">또는</span>')}</div></div>`).join('')
-          :s.review_status==='Missing'?pill('Missing · 정답 미작성','warn'):/direction_conflict/.test(sc.excluded||'')||!API_MODE?pill('N/A · 방향 충돌 장면','na'):pill(s.review_status==='Draft'?'대응 정답 없음 · 정답 검수 전':'대응 정답 없음 · 채점 제외','na')}
+          :pill(exclusion[1],exclusion[0])}
         <div class="out"><div class="row">${pill('모델이 낸 대응','pred')}</div>
           ${s.pred.valid?(s.pred.actions.length?s.pred.actions.map(a=>`<div><b>${actLbl(a.code)}</b> <span class="cond">${condLbl(a.condition)}${a.based_on&&a.based_on.length?' · '+a.based_on.join(','):''}</span></div>`).join(''):'<span class="muted small">없음</span>'):pstPill(s.pred.status)}</div>
         ${ga&&ga.forbidden_pairs.length||raws.length?`<details class="more"><summary>금지 대응 ${ga?ga.forbidden_pairs.length:0}쌍${raws.length?` · 백엔드 원문 ${raws.length}건`:''}</summary><div class="body">
@@ -512,11 +550,11 @@ function F5(){
           ${raws.length?`<ul>${raws.map(x=>`<li><span class="mono">${esc(x)}</span></li>`).join('')}</ul>`:''}</div></details>`:''}
       </section>
       <section class="card sec">
-        <h2>Box 짝짓기 <span>${sc.no_grounding?(s.gt.objects.length?'정답 검수 전이라 짝짓기 안 함':'정답 Box가 없어 짝짓기 안 함'):`짝 ${sc.box_pairs.length} · 예측만 ${sc.unmatched_pred.length} · GT만 ${sc.unmatched_ref.length}`}</span></h2>
+        <h2>객체 박스 비교 <span>${sc.no_grounding?(s.gt.objects.length?'정답 Box 검수 전 · 미채점':'정답 Box 없음 · 미채점'):`짝 ${sc.box_pairs.length} · 예측만 ${sc.unmatched_pred.length} · GT만 ${sc.unmatched_ref.length}`}</span></h2>
         <div class="chips">${sc.box_pairs.map(m=>`<button class="chip ${st.hl.has(m.prediction_id)&&st.hl.has(m.reference_id)?'on':''}" title="${esc(m.prediction_id)} ↔ ${esc(m.reference_id)}" onclick="toggleHl(['${m.prediction_id}','${m.reference_id}'])">${esc(m.prediction_id)} · IoU ${(+m.iou).toFixed(2)}</button>`).join('')}${sc.unmatched_pred.map(i=>`<button class="chip pred ${st.hl.has(i)?'on':''}" title="짝 없는 예측" onclick="toggleHl(['${i}'])">${esc(i)} · 짝 없음</button>`).join('')}${sc.no_grounding?s.pred.objects.map(o=>`<button class="chip pred ${st.hl.has(o.id)?'on':''}" onclick="toggleHl(['${o.id}'])">${esc(o.id)} · ${esc(o.class)}</button>`).join(''):!sc.box_pairs.length&&!sc.unmatched_pred.length?'<span class="muted small">예측 Box 없음</span>':''}</div>
-        ${sc.unmatched_ref.length||s.run?`<details class="more"><summary>GT만 있는 Box ${sc.unmatched_ref.length}개${s.run?' · Run 정보':''}</summary><div class="body">
+        ${sc.unmatched_ref.length||s.run?`<details class="more"><summary>${sc.no_grounding?'Run 정보':`정답에만 있는 박스 ${sc.unmatched_ref.length}개${s.run?' · Run 정보':''}`}</summary><div class="body">
           ${sc.unmatched_ref.length?`<div class="chips">${sc.unmatched_ref.map(i=>`<button class="chip gt ${st.hl.has(i)?'on':''}" onclick="toggleHl(['${i}'])">${esc(i)}</button>`).join('')}</div>`:''}
-          ${sc.unmeasurable_regions.length?`<div class="muted">측정 불가 Region: ${sc.unmeasurable_regions.map(esc).join(', ')}</div>`:''}
+          ${sc.unmeasurable_regions.length?`<div class="muted">비교할 수 없는 영역: ${sc.unmeasurable_regions.map(esc).join(', ')}</div>`:''}
           ${s.run?`${s.review_status!=='Reviewed'?'<div class="muted">정답이 아직 검수 전이라 짝 없는 예측을 오탐으로 단정하지 않음</div>':''}<div class="muted mono">${esc(s.run.name)} · ${esc(s.run.quant)} · adapter ${s.run.adapter??'없음(Base)'} · ${esc(s.run.branch)}@${esc(s.run.commit)}</div><div class="muted">${(s.blockers||[]).length?`공식 점수 미산출 사유: <span class="mono">${s.blockers.map(esc).join(', ')}</span>`:''}</div>`:''}</div></details>`:''}
       </section>
     </div>
